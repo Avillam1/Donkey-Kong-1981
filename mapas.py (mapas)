@@ -1,0 +1,150 @@
+
+# --- VIGAS: Plataformas divididas con huecos en el medio ---
+NIVEL_1_VIGAS = [
+    (30, 640, 420, 20),    # Piso 1: Suelo principal continuo
+    (30, 520, 200, 20),    # Piso 2 (Izquierda)
+    (290, 520, 200, 20),   # Piso 2 (Derecha)
+    (50, 400, 350, 20),   # Piso 3: Puente central
+    (30, 280, 160, 20),    # Piso 4 (Izquierda)
+    (265, 280, 220, 20),   # Piso 4 (Derecha)
+    (30, 168, 320, 20) ,   # Piso DK: Gran plataforma central
+    (130, 80, 90, 20)     # Piso Meta: Plataforma pequeña de Pauline
+]
+
+# --- ESCALERAS: Obligan a ir de los lados al centro y viceversa ---
+NIVEL_1_ESCALERAS = [
+    (200, 520, 20, 125),     
+    (300, 520, 20, 125),   
+    
+    (45, 398, 20, 125),    
+    (385, 398, 20, 125),   
+       
+    (260, 280, 20, 125),    
+    
+    (140, 170, 20, 115),     
+    (310, 170, 20, 115)      
+]
+
+# --- ESCALERA FINAL DE MARIO ---
+NIVEL_1_ESCALERAS_MARIO = [
+    (205, 82, 20, 90)     # Directo desde el centro de DK hacia Pauline
+]
+
+# --- MARTILLOS: Estratégicamente colocados ---
+NIVEL_1_MARTILLOS = [
+    (100, 340),  # En el Piso 2 Izquierdo
+    (350, 220)   # En el Piso 4 Derecho
+]
+
+# --- PAREDES INVISIBLES ---
+NIVEL_1_PAREDES_INVISIBLES = [
+    (0, 0, 200, 185),      # Pared izquierda 
+    (450, 0, 200, 185)     # Pared derecha
+]
+
+# --- PERSONAJES: En el medio exacto de la pantalla ---
+NIVEL_1_MONO = (70, 126)      # DK en el centro
+NIVEL_1_PAULINE = (130, 40)    # Pauline arriba en el centro
+
+# --- BARRILES DE DECORACIÓN: Al lado de DK ---
+NIVEL_1_BARRILES_DECO = [
+    (35, 150), (50, 150),  (35, 125),  (50, 125)           
+]     
+
+# -------------------------------------------------------
+
+NIVEL_2_VIGAS = [
+    (30, 640, 420, 20),    
+    (50, 510, 400, 20),   
+    (30, 370, 400, 20),    
+    (50, 230, 400, 20),    
+    (120, 158, 85, 20)    
+]
+
+NIVEL_2_ESCALERAS = [
+    (380, 510, 20, 135), 
+    (70, 370, 20, 145),
+    (160, 370, 20, 145),    
+    (380, 230, 20, 145),
+    (250, 230, 20, 145)  
+]
+
+NIVEL_2_ESCALERAS_MARIO = [
+    (190, 162, 20, 72)     # Escalera final hacia Pauline
+]
+
+NIVEL_2_MARTILLOS = [
+    (220, 450),   
+    (120, 300)
+]
+
+NIVEL_2_PAREDES_INVISIBLES = [
+    (0, 0, 190, 235),      # Pared izquierda 
+    (450, 0, 190, 235)     # Pared derecha
+]
+
+NIVEL_2_MONO = (90, 187)
+NIVEL_2_PAULINE = (120, 120)
+
+NIVEL_2_BARRILES_DECO = [
+    (50, 210), (65, 210),  (50, 185),  (66, 185)        
+]
+
+# -------------------------------------------------------
+
+NIVEL_3_VIGAS = [
+    # Piso 1
+    (30, 640, 195, 20), (225, 637, 25, 20), (250, 634, 30, 20), (280, 631, 30, 20),
+    (310, 628, 30, 20), (340, 625, 30, 20), (370, 622, 30, 20), (400, 619, 18, 20)
+] + [
+    # Piso 2 (Generado con bucle)
+    (30 + (i*30), 528 + (i*2) if i<1 else 530 + ((i-1)*2), 30, 20) for i in range(12)
+] + [
+    # Piso 3 (Generado con bucle + plataforma extra)
+    (60 + (i*30), 464 - (i*2), 30, 20) for i in range(11)
+] + [
+    (390, 442, 28, 20)
+] + [
+    # Piso 4 (Generado con bucle)
+    (30 + (i*30), 352 + (i*2), 30, 20) for i in range(12)
+] + [
+    # Piso 5 (Generado con bucle + plataforma extra)
+    (60 + (i*30), 288 - (i*2), 30, 20) for i in range(11)
+] + [
+    (390, 266, 28, 20)
+] + [
+    # Piso 6 y Meta
+    (30, 202, 280, 20), (310, 204, 25, 20), (335, 206, 25, 20), (360, 208, 25, 20),
+    (208, 150, 90, 20)
+]
+
+NIVEL_3_ESCALERAS = [
+    (345, 552, 20, 78), (80, 468, 20, 68), (345, 374, 20, 78), 
+    (78, 290, 20, 70), (345, 215, 20, 58), (194, 120, 20, 88), 
+    (174, 120, 20, 88), (204, 218, 20, 8), (204, 265, 20, 20), 
+    (184, 285, 20, 85), (315, 285, 20, 25), (315, 345, 20, 30), 
+    (165, 375, 20, 35), (165, 445, 20, 20), (260, 370, 20, 88), 
+    (175, 552, 20, 15), (175, 610, 20, 35), (200, 460, 20, 85)
+]
+
+NIVEL_3_ESCALERAS_MARIO = [
+    (285, 156, 20, 50)
+]
+
+NIVEL_3_MARTILLOS = [
+    (80, 400),   
+    (80, 230)
+]
+
+NIVEL_3_PAREDES_INVISIBLES = [
+    (0, 0, 240, 190),   
+    (430, 0, 20, 720)  
+]    
+
+
+NIVEL_3_MONO = (90, 158)       
+NIVEL_3_PAULINE = (210, 115)   
+
+NIVEL_3_BARRILES_DECO = [
+    (40, 183), (55, 183),  (40, 180 - 22),  (55, 158)        
+]
