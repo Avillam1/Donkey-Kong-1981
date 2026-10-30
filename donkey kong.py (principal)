@@ -1,0 +1,1148 @@
+import pygame
+import random
+import mapas
+
+pygame.init()
+
+SCREEN_WIDTH, SCREEN_HEIGHT = 448, 660
+MARGIN = 30
+PLAY_WIDTH, PLAY_HEIGHT = SCREEN_WIDTH - (MARGIN * 2), SCREEN_HEIGHT - MARGIN
+
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Donkey Kong 1981")
+clock = pygame.time.Clock()
+FPS = 60
+BLACK = (0, 0, 0)
+
+ESCENARIOS_DIR = "assets/escenarios/"
+# Rutas de las carpetas (asegúrate de que los nombres coincidan con tus carpetas reales)
+ASSETS_DIR = "assets"  
+MARIO_DIR = "assets/mario/"
+KONG_DIR = "assets/kong/"
+PAULINE_DIR = "assets/pauline/"
+BARRILES_DIR = "assets/barriles/"
+POINTS_DIR = "assets/puntos/"
+
+background_image = pygame.transform.scale(pygame.image.load(ESCENARIOS_DIR + "dk1.jpg").convert(), (PLAY_WIDTH, PLAY_HEIGHT))
+platform_texture = pygame.image.load(ESCENARIOS_DIR + "viga.png").convert_alpha()
+ladder_texture = pygame.image.load(ESCENARIOS_DIR + "escalera.png").convert_alpha()
+
+kong_st = pygame.image.load(KONG_DIR + "kong.png").convert_alpha()
+kong_atk1 = pygame.image.load(KONG_DIR + "atacar1.png").convert_alpha()
+kong_atk2 = pygame.image.load(KONG_DIR + "atacar2.png").convert_alpha()
+kong_ch1 = pygame.image.load(KONG_DIR + "pecho1.png").convert_alpha()
+kong_ch2 = pygame.image.load(KONG_DIR + "pecho2.png").convert_alpha()
+kong_get = pygame.image.load(KONG_DIR + "agarrar.png").convert_alpha()  
+kong_hold = pygame.image.load(KONG_DIR + "sostener.png").convert_alpha()
+
+# --- CLASE: PLATAFORMA ---
+class Platform(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, height, texture):
+        super().__init__()
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(topleft=(x, y))
+        scaled_texture = pygame.transform.scale(texture, (texture.get_width(), height))
+        for i in range(0, width, scaled_texture.get_width()):
+            self.image.blit(scaled_texture, (i, 0))
+
+class Ladder(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, height, texture):
+        super().__init__()
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(topleft=(x, y))
+        scaled_texture = pygame.transform.scale(texture, (width, texture.get_height()))
+        for i in range(0, height, scaled_texture.get_height()):
+            self.image.blit(scaled_texture, (0, i))
+
+class InvisibleWall(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, height):
+        super().__init__()
+        self.image = pygame.Surface((width, height), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+class Corazon(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.image = pygame.transform.scale(pygame.image.load("assets/corazon.png").convert_alpha(), (24, 24))
+        self.rect = self.image.get_rect(center=(x, y))
+        self.timer = 0
+
+    def update(self):
+        self.timer += 1
+        self.image.set_alpha(255 if self.timer % 30 < 15 else 0)
+
+# Inicializamos el grupo antes del bucle
+grupo_corazon = pygame.sprite.Group()
+corazon_creado = False
+
+class Hammer(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.w, self.h = 20, 20  
+        img = pygame.image.load(BARRILES_DIR + "martillo.png").convert_alpha()
+        self.image = pygame.transform.scale(img, (self.w, self.h))
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+class OilFlames(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.w, self.h = 24, 16  
+        self.anim_llamas = [pygame.transform.scale(pygame.image.load(BARRILES_DIR + f"petroleo{i}.png").convert_alpha(), (self.w, self.h)) for i in (1, 2)]
+        self.image = self.anim_llamas[0]
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.index, self.frame_timer, self.speed_anim = 0, 0, 8  
+
+    def update(self):
+        self.frame_timer += 1
+        if self.frame_timer >= self.speed_anim:
+            self.frame_timer = 0
+            self.index = (self.index + 1) % len(self.anim_llamas)
+            self.image = self.anim_llamas[self.index]
+
+class Fireball(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.w, self.h = 24, 24
+        self.anim_fuego = [pygame.transform.scale(pygame.image.load(BARRILES_DIR + f"fuego{i}.png").convert_alpha(), (self.w, self.h)) for i in (1, 2)]
+        self.anim_panico = [pygame.transform.scale(pygame.image.load(BARRILES_DIR + f"fuegoazul{i}.png").convert_alpha(), (self.w, self.h)) for i in (1, 2)]
+        
+        self.image = self.anim_fuego[0]
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.pos_x = float(x) 
+        self.change_x, self.change_y, self.gravity = 1.2, -4.5, 0.5
+        self.in_arc, self.activa = True, False
+        self.frame_timer, self.index, self.speed_anim, self.timer_nacimiento = 0, 0, 8, 0
+
+    def update(self, platforms, mario_has_hammer):
+        if not self.activa:
+            self.timer_nacimiento += 1
+            if self.timer_nacimiento > 40: self.activa = True
+
+        if self.in_arc:
+            self.pos_x += self.change_x
+            self.rect.x = int(self.pos_x)
+            self.change_y += self.gravity
+            self.rect.y += self.change_y
+            
+            platform_hits = pygame.sprite.spritecollide(self, platforms, False)
+            if platform_hits and self.change_y > 0:
+                highest_platform = min(platform_hits, key=lambda p: p.rect.top)
+                if self.rect.bottom >= highest_platform.rect.top:
+                    self.rect.bottom = highest_platform.rect.top
+                    self.in_arc = False
+                    self.change_x, self.change_y = 1.5, 0
+        else:
+            self.pos_x += self.change_x
+            self.rect.x = int(self.pos_x)
+            
+            self.rect.y += 15
+            platform_hits = pygame.sprite.spritecollide(self, platforms, False)
+            self.rect.y -= 15
+            if platform_hits:
+                self.rect.bottom = min(platform_hits, key=lambda p: p.rect.top).rect.top
+            
+            if self.rect.left < MARGIN or self.rect.right > SCREEN_WIDTH - MARGIN:
+                self.change_x = -self.change_x
+
+class OilDrum(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.w, self.h = 24, 28
+        img = pygame.image.load(BARRILES_DIR + "petroleo.png").convert()
+        img.set_colorkey(img.get_at((0, 0))) 
+        self.image = pygame.transform.scale(img, (self.w, self.h))
+        self.rect = self.image.get_rect(topleft=(x, y - 8))
+
+class Barrel(pygame.sprite.Sprite):
+    def __init__(self, x, y, is_blue=False):
+        super().__init__()
+        self.w, self.h = 24, 24  
+        self.is_blue = is_blue 
+        self.ya_saltado = False
+
+        if self.is_blue:
+            self.anim_rodar = [pygame.transform.scale(pygame.image.load(BARRILES_DIR + f"barrilazul{i}.png").convert_alpha(), (self.w, self.h)) for i in (1, 2)]
+            self.change_x, self.change_y, self.is_descending, self.SUELO_Y = 0, 4, True, 640  
+        else:
+            self.anim_rodar = [pygame.transform.scale(pygame.image.load(BARRILES_DIR + f"barril{i}.png").convert_alpha(), (self.w, self.h)) for i in (1, 2, 3)]
+            self.change_x, self.change_y, self.is_descending = 2, 0, False
+
+        self.image = self.anim_rodar[0]
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.cooldown_escalera, self.frame_timer, self.index = 0, 0, 0  
+        self.escalera_evaluada = False 
+
+    def update(self, platforms, ladders):
+        if self.cooldown_escalera > 0: self.cooldown_escalera -= 1
+
+        if not self.is_descending:
+            self.rect.x += self.change_x
+            escaleras_tocadas = pygame.sprite.spritecollide(self, ladders, False)
+            
+            if escaleras_tocadas:
+                if not self.escalera_evaluada and self.cooldown_escalera == 0:
+                    escalera = escaleras_tocadas[0]
+                    if abs(self.rect.bottom - escalera.rect.top) <= 12:
+                        self.escalera_evaluada = True 
+                        if random.random() < 0.60: 
+                            self.is_descending = True
+                            self.rect.centerx = escalera.rect.centerx
+                            self.change_x, self.change_y = 0, 3
+            else:
+                self.escalera_evaluada = False
+
+            self.rect.y += 6  
+            platform_hits = pygame.sprite.spritecollide(self, platforms, False)
+            self.rect.y -= 6
+            
+            if platform_hits:
+                viga_actual = min(platform_hits, key=lambda p: abs(self.rect.centerx - p.rect.centerx))
+                self.rect.bottom = viga_actual.rect.top + 4
+            else:
+                self.is_descending, self.change_x, self.change_y = True, 0, 3  
+
+            if self.rect.left < MARGIN:
+                self.rect.left, self.change_x = MARGIN, -self.change_x
+            if self.rect.right > SCREEN_WIDTH - MARGIN:
+                self.rect.right, self.change_x = SCREEN_WIDTH - MARGIN, -self.change_x
+
+        else:
+            self.rect.y += self.change_y
+            platform_hit_list = pygame.sprite.spritecollide(self, platforms, False)
+            
+            if self.is_blue:
+                if self.rect.bottom >= self.SUELO_Y - 10:
+                    for block in platform_hit_list:
+                        if block.rect.y >= 619: 
+                            self.is_descending = False
+                            self.rect.bottom = block.rect.top + 4
+                            self.change_x, self.change_y = -2.5, 0  
+                            break
+            else:
+                for block in platform_hit_list:
+                    if block.rect.top <= self.rect.bottom <= block.rect.top + self.change_y + 1:
+                        self.is_descending, self.escalera_evaluada = False, False
+                        self.cooldown_escalera = 60 
+                        self.change_x = -2 if self.rect.x > SCREEN_WIDTH // 2 else 2
+                        self.rect.bottom, self.change_y = block.rect.top + 4, 0
+                        break 
+
+        self.frame_timer += 1
+        if self.frame_timer >= 4:  
+            self.frame_timer = 0
+            self.index = (self.index + 1) % len(self.anim_rodar)
+            self.image = self.anim_rodar[self.index]
+
+class DecorativeBarrel(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.w, self.h = 24, 24
+        self.image = pygame.transform.scale(pygame.image.load(BARRILES_DIR + "barrilquieto.png").convert_alpha(), (self.w, self.h))
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+class HelpSign(pygame.sprite.Sprite):
+    def __init__(self, owner):
+        super().__init__()
+        self.owner = owner  
+        self.w, self.h = 48, 24  
+        img = pygame.image.load(PAULINE_DIR + "help.png").convert()
+        img.set_colorkey(img.get_at((0, 0))) 
+        self.image = pygame.transform.scale(img, (self.w, self.h))
+        self.rect = self.image.get_rect()
+        self.visible = False
+
+    def update(self):
+        self.rect.centerx = self.owner.rect.centerx + 45
+        self.rect.bottom = self.owner.rect.top + 20
+        self.visible = (self.owner.state == 'HELP')
+
+class Pauline(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.w, self.h = 32, 42  
+        imgs = [pygame.image.load(PAULINE_DIR + f"pauline{i}.png").convert() for i in (1, 2)]
+        COLOR_FONDO = imgs[0].get_at((0, 0))
+        for img in imgs: img.set_colorkey(COLOR_FONDO)
+        
+        self.frames_pauline = [pygame.transform.scale(img, (self.w, self.h)) for img in imgs]
+        self.image = self.frames_pauline[0] 
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.state = 'IDLE'
+        self.index, self.frame_timer, self.speed_anim = 0, 0, 15  
+        self.state_timer = random.randint(100, 200)
+
+    def update(self):
+        self.frame_timer += 1
+        self.state_timer -= 1
+        
+        if self.state == 'IDLE':
+            self.image = self.frames_pauline[0]
+            if self.state_timer <= 0:
+                self.state = 'HELP'
+                self.state_timer, self.index, self.frame_timer = random.randint(90, 150), 0, 0
+                
+        elif self.state == 'HELP':
+            if self.frame_timer >= self.speed_anim // 2: 
+                self.frame_timer = 0
+                self.index = (self.index + 1) % len(self.frames_pauline)
+                self.image = self.frames_pauline[self.index]
+                
+            if self.state_timer <= 0:
+                self.state = 'IDLE'
+                self.state_timer, self.index, self.frame_timer = random.randint(150, 300), 0, 0
+
+class DonkeyKong(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.w, self.h = 48, 48
+        # kong_st, kong_atk1, etc., ya están cargadas en el bloque anterior
+        self.anim_stand = [pygame.transform.scale(kong_st, (self.w, self.h))]
+        self.anim_attack = [pygame.transform.scale(img, (self.w, self.h)) for img in (kong_atk1, kong_atk2)]
+        self.anim_chest = [pygame.transform.scale(img, (self.w, self.h)) for img in (kong_ch1, kong_ch2)]
+        self.anim_pickup = [pygame.transform.scale(kong_get, (self.w, self.h))]
+        self.anim_hold = [pygame.transform.scale(kong_hold, (self.w, self.h))]
+        
+        self.image = self.anim_stand[0]
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.state = 'STAND' 
+        self.frame_timer, self.index, self.speed_anim = 0, 0, 4  
+        self.action_timer = random.randint(35, 65)  
+        self.state_duration = 0 
+        self.lanzar_ahora, self.primer_barril_lanzado = False, False 
+        self.proximo_azul = True  
+
+    def update(self):
+        self.frame_timer += 1
+        if self.state == 'STAND':
+            self.image = self.anim_stand[0]
+            self.action_timer -= 1
+            if self.action_timer <= 0:
+                if random.random() < 0.85:
+                    self.state, self.state_duration = 'PICKUP', 20  
+                    self.proximo_azul = not self.primer_barril_lanzado 
+                else:
+                    self.state, self.index = 'CHEST', 0
+                    self.state_duration = random.randint(30, 50) 
+                self.frame_timer = 0
+        elif self.state == 'PICKUP':
+            self.image = self.anim_pickup[0]
+            self.state_duration -= 1
+            if self.state_duration <= 0:
+                self.state, self.state_duration = 'HOLD', 20  
+        elif self.state == 'HOLD':
+            self.image = self.anim_hold[0]
+            self.state_duration -= 1
+            if self.state_duration <= 0:
+                self.state, self.index, self.frame_timer = 'THROW', 0, 0
+                self.image = self.anim_attack[0] 
+        elif self.state == 'THROW':
+            if self.frame_timer >= self.speed_anim:
+                self.frame_timer = 0
+                self.index += 1
+                if self.index < len(self.anim_attack):
+                    self.image = self.anim_attack[self.index]
+                else:
+                    self.lanzar_ahora, self.state = True, 'STAND'
+                    self.action_timer, self.index = random.randint(35, 75), 0  
+        elif self.state == 'CHEST':
+            if self.frame_timer >= self.speed_anim:
+                self.frame_timer = 0
+                self.index = (self.index + 1) % len(self.anim_chest)
+                self.image = self.anim_chest[self.index]
+            self.state_duration -= 1
+            if self.state_duration <= 0:
+                self.state, self.action_timer = 'STAND', random.randint(35, 65)
+
+class Player(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.w, self.h = 28, 28  
+        self.img_quieto = pygame.transform.scale(pygame.image.load(MARIO_DIR + "mario.png").convert_alpha(), (self.w, self.h))
+        self.anim_caminar = [pygame.transform.scale(pygame.image.load(MARIO_DIR + f"caminar{i}.png").convert_alpha(), (self.w, self.h)) for i in (1, 2)]
+        self.anim_escalar = [pygame.transform.scale(pygame.image.load(MARIO_DIR + f"escalar{i}.png").convert_alpha(), (self.w, self.h)) for i in (1, 2)]
+        
+        self.martillo_quieto = [pygame.transform.scale(pygame.image.load(MARIO_DIR + f"martillo{i}.png").convert_alpha(), (self.w + 28, self.h + 28)) for i in (1, 2)]
+        self.martillo_caminar = [pygame.transform.scale(pygame.image.load(MARIO_DIR + f"martillo{i}.png").convert_alpha(), (self.w + 28, self.h + 28)) for i in range(3, 7)]
+
+        self.image = self.img_quieto
+        self.rect = self.image.get_rect()
+        self.rect.height, self.rect.x, self.rect.y = 24, MARGIN + 50, 616
+        self.change_x, self.change_y, self.gravity = 0, 0, 0.45
+        self.on_ladder, self.climbing, self.is_jumping = False, False, False  
+        self.direction, self.index, self.frame_timer, self.speed_anim = "R", 0, 0, 3  
+        self.has_hammer, self.hammer_timer = False, 0
+
+        self.imagen_salto_der = pygame.transform.scale(pygame.image.load(MARIO_DIR + "salto.png").convert_alpha(), (28, 24))
+        self.imagen_salto_izq = pygame.transform.flip(self.imagen_salto_der, True, False)
+
+    def update(self, platforms, ladders, walls):
+        self.rect.width, self.rect.height = 28, 24
+
+        if self.has_hammer:
+            self.hammer_timer -= 1
+            if self.hammer_timer <= 0: self.has_hammer = False
+
+        # 🌟 NUEVO: Guardamos el estado anterior para saber si acaba de salir de la escalera
+        was_climbing = self.climbing  
+        self.on_ladder = bool(pygame.sprite.spritecollide(self, ladders, False))
+        
+        if not self.on_ladder: 
+            self.climbing = False  
+            # Detenemos el falso salto al llegar arriba de la escalera
+            if was_climbing and self.change_y < 0:
+                self.change_y = 0
+
+        # 🌟 NUEVO: Fiel al arcade, no te puedes mover a los lados mientras escalas
+        if self.climbing:
+            self.change_x = 0
+
+        if not self.climbing:
+            self.change_y = min(self.change_y + self.gravity, 8)  
+
+        self.rect.x += self.change_x
+        if self.rect.left < MARGIN: self.rect.left = MARGIN
+        if self.rect.right > SCREEN_WIDTH - MARGIN: self.rect.right = SCREEN_WIDTH - MARGIN
+        
+        for wall in pygame.sprite.spritecollide(self, walls, False):
+            if self.change_x > 0: self.rect.right = wall.rect.left
+            elif self.change_x < 0: self.rect.left = wall.rect.right
+
+        self.rect.y += self.change_y
+        if self.rect.top < MARGIN: self.rect.top = MARGIN
+        if self.rect.bottom > SCREEN_HEIGHT: 
+            self.rect.bottom, self.is_jumping, self.change_y = SCREEN_HEIGHT, False, 0
+
+        # --- SISTEMA DE COLISIONES CON VIGAS CORREGIDO ---
+        if not self.climbing:
+            for block in pygame.sprite.spritecollide(self, platforms, False):
+                if self.change_y > 0:  # Si Mario está cayendo
+                    if self.rect.bottom <= block.rect.bottom + 12:
+                        self.rect.bottom = block.rect.top
+                        self.change_y = 0
+                        self.is_jumping = False
+                elif self.change_y < 0:  # Si Mario está subiendo (saltando)
+                    # 🌟 NUEVO: Solo choca la cabeza si está verdaderamente debajo de la viga
+                    if block.rect.bottom - 15 <= self.rect.top < block.rect.bottom:
+                        self.rect.top = block.rect.bottom  
+                        self.change_y = 0                  
+            
+            if self.change_y == 0: 
+                self.is_jumping = False
+                
+        self.animate()
+
+        if self.is_jumping and not self.has_hammer:
+            self.image = self.imagen_salto_izq if self.direction == "L" else self.imagen_salto_der
+
+    def jump(self):
+        if not self.is_jumping: 
+            self.is_jumping, self.change_y = True, -5.8 
+            canal_salto.play(sonido_salto) 
+
+    def animate(self):
+        if self.has_hammer:
+            self.frame_timer += 1
+            if self.change_x != 0:
+                if self.index >= len(self.martillo_caminar): self.index = 0
+                if self.frame_timer >= 5: 
+                    self.frame_timer, self.index = 0, (self.index + 1) % len(self.martillo_caminar)
+                frame_actual = self.martillo_caminar[self.index]
+            else:
+                if self.index >= len(self.martillo_quieto): self.index = 0
+                if self.frame_timer >= 5: 
+                    self.frame_timer, self.index = 0, (self.index + 1) % len(self.martillo_quieto)
+                frame_actual = self.martillo_quieto[self.index]
+            self.image = pygame.transform.flip(frame_actual, True, False) if self.direction == "L" else frame_actual
+
+        elif self.climbing and self.change_y != 0:
+            self.frame_timer += 1
+            if self.frame_timer >= self.speed_anim:
+                self.frame_timer, self.index = 0, (self.index + 1) % len(self.anim_escalar)
+                self.image = self.anim_escalar[self.index]
+        elif self.climbing and self.change_y == 0:
+            self.image = self.anim_escalar[self.index]
+        elif self.change_x != 0 and self.change_y == 0:
+            self.frame_timer += 1
+            if self.frame_timer >= self.speed_anim:
+                self.frame_timer, self.index = 0, (self.index + 1) % len(self.anim_caminar)
+                frame_actual = self.anim_caminar[self.index]
+                self.image = pygame.transform.flip(frame_actual, True, False) if self.direction == "L" else frame_actual
+        elif self.change_x == 0 and self.change_y == 0:
+            self.image = pygame.transform.flip(self.img_quieto, True, False) if self.direction == "L" else self.img_quieto
+        
+        if self.is_jumping and not self.has_hammer:
+            self.image = pygame.transform.flip(self.img_quieto, True, False) if self.direction == "L" else self.img_quieto
+
+    # 🌟 NUEVO: Protegemos el movimiento lateral para que no se resbale de la escalera
+    def go_left(self): 
+        if not self.climbing: self.change_x, self.direction = -1.8, "L" 
+    def go_right(self): 
+        if not self.climbing: self.change_x, self.direction = 2.5, "R"
+        
+    def go_up(self): 
+        if self.on_ladder and not self.has_hammer: self.climbing, self.change_y = True, -1
+    def go_down(self): 
+        if self.on_ladder and not self.has_hammer: self.climbing, self.change_y = True, 1
+    def stop_x(self): self.change_x = 0
+    def stop_y(self): 
+        if self.climbing: self.change_y = 0
+        
+all_sprites = pygame.sprite.Group()
+platforms = pygame.sprite.Group()
+ladders = pygame.sprite.Group()
+mario_only_ladders = pygame.sprite.Group() 
+barrels = pygame.sprite.Group() 
+fireballs = pygame.sprite.Group() 
+drum_flames = pygame.sprite.Group() 
+invisible_walls = pygame.sprite.Group() 
+hammers = pygame.sprite.Group()
+decorative_barrels = pygame.sprite.Group()
+grupo_corazon = pygame.sprite.Group()
+
+mostrar_paredes = False
+vidas = 3
+nivel = 1
+bonus = 5000
+contador_frames_bonus = 0
+juego_terminado = False
+victoria = False
+modo_dios = False  # 🌟 TRUE = Invencible | FALSE = Daño activado
+corazon_creado = False
+llamas_creadas = False 
+puntos_activos = []
+combo_martillo = 0
+
+fuente = pygame.font.SysFont("Arial", 30, bold=True)
+fuente_corchetes = pygame.font.SysFont("Arial", 46, bold=False) 
+
+NOMBRE_ARCHIVO_FONTS = "letras.otf" 
+fuente_hud = pygame.font.SysFont("Arial", 20, bold=True)
+fuente_bonus = pygame.font.SysFont("Arial", 18, bold=True)
+
+# Imágenes de Puntos
+imagen_puntos_100 = pygame.transform.scale(pygame.image.load(f"{POINTS_DIR}/100.png").convert_alpha(), (30, 25))
+imagen_puntos_300 = pygame.transform.scale(pygame.image.load(f"{POINTS_DIR}/300.png").convert_alpha(), (30, 25))
+imagen_puntos_500 = pygame.transform.scale(pygame.image.load(f"{POINTS_DIR}/500.png").convert_alpha(), (30, 25))
+
+player = Player()
+player.mirando_derecha = True
+all_sprites.add(player)
+
+sprites_muerte = [
+    pygame.image.load(f"{MARIO_DIR}/muerte{i}.png").convert_alpha() for i in range(1, 6)
+]
+sprites_muerte = [pygame.transform.scale(img, (player.rect.width, player.rect.height)) for img in sprites_muerte]
+ULTIMO_FRAME_MUERTE = sprites_muerte[-1]
+
+mono = DonkeyKong(68, 160)
+all_sprites.add(mono) 
+
+oil_drum = OilDrum(42, 624)
+pauline = Pauline(210, 118)
+letrero_help = HelpSign(pauline)
+all_sprites.add(oil_drum, pauline)
+
+pared_bloqueo = InvisibleWall(mono.rect.right, mono.rect.y - 100, 160, 148)
+pared_bloqueo1 = InvisibleWall(mono.rect.right + 185, mono.rect.y - 100, 10, 75)
+invisible_walls.add(pared_bloqueo, pared_bloqueo1)
+
+sonido_inicio = pygame.mixer.Sound(f"{ASSETS_DIR}/inicio.mp3")
+sonido_inicio.set_volume(0.5)
+
+sonido_caminar = pygame.mixer.Sound(f"{MARIO_DIR}/caminar.mp3") 
+canal_caminar = pygame.mixer.Channel(2) 
+sonido_caminar.set_volume(0.4) 
+
+sonido_salto = pygame.mixer.Sound(f"{MARIO_DIR}/salto.mp3")
+canal_salto = pygame.mixer.Channel(3)
+sonido_salto.set_volume(0.1)
+
+sonido_martillo = pygame.mixer.Sound(f"{MARIO_DIR}/martillo.mp3")
+canal_martillo = pygame.mixer.Channel(1)
+sonido_martillo.set_volume(0.9) 
+
+sonido_muerte = pygame.mixer.Sound(f"{MARIO_DIR}/muerte.mp3")  
+sonido_muerte.set_volume(0.8)    
+
+sonido_victoria = pygame.mixer.Sound(f"{ASSETS_DIR}/victoria.mp3") 
+sonido_victoria.set_volume(0.6)
+
+sonido_inicio_nivel = pygame.mixer.Sound(f"{ASSETS_DIR}/intro.wav")
+sonido_inicio_nivel.set_volume(0.4)
+
+
+def cargar_mapa(num_nivel):
+    for p in platforms: p.kill()
+    for l in ladders: l.kill()
+    for m in mario_only_ladders: m.kill()
+    for iw in invisible_walls: iw.kill()
+    for db in decorative_barrels: db.kill() 
+    
+    platforms.empty()
+    ladders.empty()
+    mario_only_ladders.empty()
+    invisible_walls.empty()
+    decorative_barrels.empty() 
+    
+    vigas_nivel = []
+    escaleras_nivel = []
+    escaleras_mario_nivel = []
+    paredes_invisible_data = []
+    
+    pos_mono = (0, 0)
+    pos_pauline = (0, 0)
+    barriles_deco_data = []
+    
+    if num_nivel == 1:
+        vigas_nivel = [Platform(*c, texture=platform_texture) for c in mapas.NIVEL_1_VIGAS]
+        escaleras_nivel = [Ladder(*c, texture=ladder_texture) for c in mapas.NIVEL_1_ESCALERAS]
+        escaleras_mario_nivel = [Ladder(*c, texture=ladder_texture) for c in mapas.NIVEL_1_ESCALERAS_MARIO]
+        paredes_invisible_data = mapas.NIVEL_1_PAREDES_INVISIBLES
+        pos_mono = mapas.NIVEL_1_MONO
+        pos_pauline = mapas.NIVEL_1_PAULINE
+        barriles_deco_data = mapas.NIVEL_1_BARRILES_DECO
+
+    elif num_nivel == 2:
+        vigas_nivel = [Platform(*c, texture=platform_texture) for c in mapas.NIVEL_2_VIGAS]
+        escaleras_nivel = [Ladder(*c, texture=ladder_texture) for c in mapas.NIVEL_2_ESCALERAS]
+        escaleras_mario_nivel = [Ladder(*c, texture=ladder_texture) for c in mapas.NIVEL_2_ESCALERAS_MARIO]
+        paredes_invisible_data = mapas.NIVEL_2_PAREDES_INVISIBLES
+        pos_mono = mapas.NIVEL_2_MONO
+        pos_pauline = mapas.NIVEL_2_PAULINE
+        barriles_deco_data = mapas.NIVEL_2_BARRILES_DECO
+
+    elif num_nivel == 3:
+        vigas_nivel = [Platform(*c, texture=platform_texture) for c in mapas.NIVEL_3_VIGAS]
+        escaleras_nivel = [Ladder(*c, texture=ladder_texture) for c in mapas.NIVEL_3_ESCALERAS]
+        escaleras_mario_nivel = [Ladder(*c, texture=ladder_texture) for c in mapas.NIVEL_3_ESCALERAS_MARIO]
+        paredes_invisible_data = mapas.NIVEL_3_PAREDES_INVISIBLES
+        pos_mono = mapas.NIVEL_3_MONO
+        pos_pauline = mapas.NIVEL_3_PAULINE
+        barriles_deco_data = mapas.NIVEL_3_BARRILES_DECO
+    
+    for viga in vigas_nivel:
+        platforms.add(viga)
+        all_sprites.add(viga)
+
+    for escalera in escaleras_nivel:
+        ladders.add(escalera)
+        all_sprites.add(escalera)
+
+    for esc_mario in escaleras_mario_nivel:
+        mario_only_ladders.add(esc_mario)
+        all_sprites.add(esc_mario)
+
+    for c in paredes_invisible_data:
+        pared = InvisibleWall(*c) 
+        invisible_walls.add(pared)
+
+    # Reubicación dinámica de personajes
+    if 'mono' in globals():
+        mono.rect.x = pos_mono[0]
+        mono.rect.y = pos_mono[1]
+        
+    if 'pauline' in globals():
+        pauline.rect.x = pos_pauline[0]
+        pauline.rect.y = pos_pauline[1]
+        
+    for c in barriles_deco_data:
+        barril_falso = DecorativeBarrel(*c)
+        decorative_barrels.add(barril_falso)
+        all_sprites.add(barril_falso)
+
+
+def animacion_muerte(mirando_derecha):
+    pygame.event.clear()
+    pygame.mixer.music.stop()       
+    if canal_martillo.get_busy(): canal_martillo.stop()
+    if canal_caminar.get_busy(): canal_caminar.stop()       
+    sonido_muerte.play()
+    
+    for b in barrels.sprites(): b.kill()
+    for f in fireballs.sprites(): f.kill()
+    for d in drum_flames.sprites(): d.kill()
+    barrels.empty()
+    fireballs.empty()
+    drum_flames.empty()
+    
+    frames_giro = sprites_muerte[:4]
+    frame_final = sprites_muerte[4]
+
+    for _ in range(3):
+        for frame in frames_giro:
+            screen.fill(BLACK)
+            screen.blit(background_image, (MARGIN, 0))
+            for sprite in all_sprites:
+                if sprite != player: 
+                    screen.blit(sprite.image, sprite.rect)
+            
+            frame_render = frame if mirando_derecha else pygame.transform.flip(frame, True, False)
+            screen.blit(frame_render, player.rect)
+            pygame.display.flip()
+            pygame.time.delay(150) 
+            
+    screen.fill(BLACK)
+    screen.blit(background_image, (MARGIN, 0))
+    for sprite in all_sprites:
+        if sprite != player: 
+            screen.blit(sprite.image, sprite.rect)
+            
+    ultimo_actual = frame_final if mirando_derecha else pygame.transform.flip(frame_final, True, False)
+    screen.blit(ultimo_actual, player.rect)
+    pygame.display.flip() 
+    
+    pygame.time.wait(2000)
+    screen.fill((0, 0, 0)) 
+    pygame.display.flip()
+    pygame.time.wait(1500)
+
+
+def reiniciar_nivel():
+    global puntos_activos, combo_martillo, mono, pauline, bonus, contador_frames_bonus
+    
+    barrels.empty()
+    fireballs.empty()
+    drum_flames.empty()
+    puntos_activos = []
+    combo_martillo = 0
+    
+    # Recrear barriles decorativos según el nivel activo
+    for bd in decorative_barrels.sprites(): bd.kill()
+    decorative_barrels.empty()
+
+    coordenadas_decorativos = []
+    if nivel == 1: 
+        coordenadas_decorativos = mapas.NIVEL_1_BARRILES_DECO  
+    elif nivel == 2: 
+        coordenadas_decorativos = mapas.NIVEL_2_BARRILES_DECO  
+    elif nivel == 3: 
+        coordenadas_decorativos = mapas.NIVEL_3_BARRILES_DECO  
+    
+    for pos in coordenadas_decorativos:
+        nuevo_decorativo = DecorativeBarrel(pos[0], pos[1]) 
+        decorative_barrels.add(nuevo_decorativo)
+        all_sprites.add(nuevo_decorativo)
+    
+    for h in hammers.sprites(): h.kill() 
+    hammers.empty()
+    
+    coordenadas_martillos = []
+    if nivel == 1: coordenadas_martillos = mapas.NIVEL_1_MARTILLOS
+    elif nivel == 2: coordenadas_martillos = mapas.NIVEL_2_MARTILLOS
+    elif nivel == 3: coordenadas_martillos = mapas.NIVEL_3_MARTILLOS
+
+    for pos in coordenadas_martillos:
+        nuevo_martillo = Hammer(pos[0], pos[1])
+        hammers.add(nuevo_martillo)
+        all_sprites.add(nuevo_martillo)
+
+    mono.kill()
+    pauline.kill()
+    
+    if nivel == 1:
+        pos_mono = mapas.NIVEL_1_MONO
+        pos_pauline = mapas.NIVEL_1_PAULINE
+    elif nivel == 2:
+        pos_mono = mapas.NIVEL_2_MONO
+        pos_pauline = mapas.NIVEL_2_PAULINE
+    elif nivel == 3:
+        pos_mono = mapas.NIVEL_3_MONO
+        pos_pauline = mapas.NIVEL_3_PAULINE
+
+    mono = DonkeyKong(pos_mono[0], pos_mono[1])
+    all_sprites.add(mono)
+    
+    pauline = Pauline(pos_pauline[0], pos_pauline[1])
+    all_sprites.add(pauline)
+    
+    bonus = 5000
+    contador_frames_bonus = 0
+    
+    if hasattr(oil_drum, 'encendido'):
+        oil_drum.encendido = False
+
+    player.rect.x = MARGIN + 50
+    player.rect.y = 616
+    player.stop_x()
+    player.stop_y()
+    player.has_hammer = False
+    player.climbing = False
+    player.is_jumping = False
+    player.mirando_derecha = True
+    
+    if hasattr(player, 'image_standing'):
+        player.image = player.image_standing
+    elif hasattr(player, 'sprites_derecha') and len(player.sprites_derecha) > 0:
+        player.image = player.sprites_derecha[0]
+
+    pygame.mixer.music.stop()
+    if canal_martillo.get_busy(): canal_martillo.stop()
+    if canal_caminar.get_busy(): canal_caminar.stop()
+    pygame.event.clear()
+
+    screen.fill(BLACK)
+    screen.blit(background_image, (MARGIN, 0))
+    for sprite in all_sprites:
+        if sprite != player: 
+            screen.blit(sprite.image, sprite.rect)
+    screen.blit(player.image, player.rect)
+    pygame.display.flip()
+
+    sonido_inicio_nivel.play()
+    pygame.time.wait(3000)
+
+    pygame.mixer.music.load(f"{ASSETS_DIR}/musicfondo.mp3")
+    pygame.mixer.music.set_volume(0.4) 
+    pygame.mixer.music.play(-1)
+
+juego_abierto = True
+
+while juego_abierto:
+    
+    # 1. REINICIO DE VARIABLES GLOBALES PARA CADA PARTIDA
+    mostrar_paredes = False
+    vidas = 3
+    nivel = 1
+    bonus = 5000
+    contador_frames_bonus = 0
+    juego_terminado = False
+    victoria = False
+    corazon_creado = False
+    llamas_creadas = False 
+    puntos_activos = []
+    combo_martillo = 0
+    tiempo_cierre_victoria = 0
+
+    esperando_inicio = True  # 🌟 FIJADO: Antes estaba en False y se saltaba el menú
+    imagen_menu = pygame.transform.scale(pygame.image.load(f"{ASSETS_DIR}/DKScreen.png").convert(), (screen.get_width(), screen.get_height()))
+    pygame.mixer.music.load(f"{ASSETS_DIR}/menu.mp3")
+    pygame.mixer.music.set_volume(0.5)
+    pygame.mixer.music.play() 
+
+    tiempo_inicial = pygame.time.get_ticks()
+    reproduciendo = True
+    rect_boton_player = pygame.Rect(100, 410, 260, 30)
+
+    while esperando_inicio:
+        tiempo_actual = pygame.time.get_ticks()
+        tiempo_transcurrido = tiempo_actual - tiempo_inicial
+
+        if reproduciendo and tiempo_transcurrido >= 15000:
+            pygame.mixer.music.stop()
+            reproduciendo = False
+        elif not reproduciendo and tiempo_transcurrido >= 20000:
+            pygame.mixer.music.play()
+            tiempo_inicial = pygame.time.get_ticks() 
+            reproduciendo = True
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                # --- AQUÍ APLICAMOS LA INTEGRACIÓN PARA CERRAR LIMPIO ---
+                esperando_inicio = False
+                juego_abierto = False
+                
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if rect_boton_player.collidepoint(event.pos):
+                    pygame.mixer.music.stop()
+                    sonido_inicio.play()
+                    pygame.time.wait(int(sonido_inicio.get_length() * 1000))
+                    esperando_inicio = False  
+
+        # Si el usuario cerró la ventana, salir del while interno inmediatamente
+        if not juego_abierto:
+            break
+
+        pos_x = screen.get_width() // 2 - imagen_menu.get_width() // 2
+        pos_y = screen.get_height() // 2 - imagen_menu.get_height() // 2
+        screen.fill((0, 0, 0)) 
+        screen.blit(imagen_menu, (pos_x, pos_y))
+        pygame.display.flip()
+        clock.tick(60) # Esto es vital para que el juego no sature el procesador
+
+    # Evitamos cargar el nivel si ya se mandó a cerrar el juego
+    if not juego_abierto:
+        break
+
+    cargar_mapa(nivel)
+    reiniciar_nivel()
+
+    running = True
+    tiempo_cierre_victoria = 0
+    pausado = False  # 🌟 NUEVO: Variable para controlar la pausa
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT: 
+                running = False
+                juego_abierto = False
+            
+            if not juego_terminado and not victoria:
+                if event.type == pygame.KEYDOWN:
+                    # 🌟 NUEVO: Control de la tecla de pausa
+                    if event.key == pygame.K_p: 
+                        pausado = not pausado
+                        if pausado:
+                            pygame.mixer.music.pause()
+                            if canal_caminar.get_busy(): canal_caminar.pause()
+                            if canal_martillo.get_busy(): canal_martillo.pause()
+                        else:
+                            pygame.mixer.music.unpause()
+                            if canal_caminar.get_busy(): canal_caminar.unpause()
+                            if canal_martillo.get_busy(): canal_martillo.unpause()
+
+                    # Solo registrar comandos de movimiento si NO está pausado
+                    if not pausado:
+                        if event.key == pygame.K_LEFT: 
+                            player.go_left()
+                            player.mirando_derecha = False 
+                        if event.key == pygame.K_RIGHT: 
+                            player.go_right()
+                            player.mirando_derecha = True  
+                        if event.key == pygame.K_UP: player.go_up()
+                        if event.key == pygame.K_DOWN: player.go_down()
+                        if event.key == pygame.K_SPACE: player.jump()
+                
+                if event.type == pygame.KEYUP:
+                    if event.key == pygame.K_LEFT and player.change_x < 0: player.stop_x()
+                    if event.key == pygame.K_RIGHT and player.change_x > 0: player.stop_x()
+                    if event.key == pygame.K_UP and player.change_y < 0: player.stop_y()
+                    if event.key == pygame.K_DOWN and player.change_y > 0: player.stop_y()
+
+        if not running:
+            break
+
+        if not juego_terminado:
+            if not victoria:
+                if not pausado:
+                    # Lógica del Bonus de Tiempo
+                    contador_frames_bonus += 1
+                    if contador_frames_bonus >= 60:
+                        contador_frames_bonus = 0
+                        if bonus > 0:
+                            bonus -= 100
+                        elif not modo_dios: 
+                            vidas -= 1
+                            animacion_muerte(player.mirando_derecha)
+                            if vidas <= 0: 
+                                juego_terminado = True
+                            else:
+                                reiniciar_nivel()
+
+                    if not getattr(player, 'has_hammer', False):
+                        combo_martillo = 0
+                        if canal_martillo.get_busy():
+                            canal_martillo.stop()
+                            pygame.mixer.music.unpause()
+                            
+                    player.update(platforms, ladders.sprites() + mario_only_ladders.sprites(), invisible_walls)  
+                    barrels.update(platforms, ladders.sprites() + mario_only_ladders.sprites())
+                    fireballs.update(platforms, player.has_hammer) 
+                    drum_flames.update()
+                    mono.update()                                                                                                                                                                                                                                                                                                                                                                                                                                     
+                    pauline.update()                                                                                                                                                                                                                                                                                                                                                                                                                                  
+                    letrero_help.update()
+
+                    if abs(player.change_x) > 0 and not player.climbing and not getattr(player, 'is_jumping', False):
+                        if not canal_caminar.get_busy(): canal_caminar.play(sonido_caminar, loops=-1)
+                    else:
+                        canal_caminar.stop()
+
+                    if mono.lanzar_ahora:
+                        if len(barrels) < 8:  
+                            pos_x = mono.rect.centerx - 12 if mono.proximo_azul else mono.rect.right - 10
+                            nuevo_barril = Barrel(pos_x, mono.rect.bottom - 24, is_blue=mono.proximo_azul)
+                            barrels.add(nuevo_barril)
+                            all_sprites.add(nuevo_barril)
+                            if not mono.primer_barril_lanzado: mono.primer_barril_lanzado = True
+                        mono.lanzar_ahora = False
+                
+                    hammer_hits = pygame.sprite.spritecollide(player, hammers, True)
+                    for hammer in hammer_hits:
+                        player.has_hammer = True
+                        player.hammer_timer = 720  
+                        pygame.mixer.music.pause()
+                        if not canal_martillo.get_busy(): canal_martillo.play(sonido_martillo, loops=-1)
+
+                    for barril in barrels:
+                        alineado_horizontalmente = abs(player.rect.centerx - barril.rect.centerx) < 20
+                        if alineado_horizontalmente and player.is_jumping and player.rect.bottom <= barril.rect.top + 15:
+                            if not getattr(barril, 'ya_saltado', False):
+                                barril.ya_saltado = True
+                                puntos_activos.append({
+                                    'rect': imagen_puntos_100.get_rect(centerx=player.rect.centerx, bottom=player.rect.top - 15),
+                                    'timer': 60, 'image': imagen_puntos_100, 'texto': "+100"
+                                })
+
+                        if player.rect.colliderect(barril.rect.inflate(-4, -4)):
+                            if getattr(player, 'has_hammer', False):
+                                combo_martillo += 1
+                                img_actual, texto_actual = (imagen_puntos_300, "+300") if combo_martillo == 1 else (imagen_puntos_500, "+500")
+                                puntos_activos.append({
+                                    'rect': img_actual.get_rect(centerx=barril.rect.centerx, bottom=barril.rect.top - 15),
+                                    'timer': 60, 'image': img_actual, 'texto': texto_actual
+                                })
+                                barril.kill()
+                            elif not modo_dios: 
+                                vidas -= 1
+                                animacion_muerte(player.mirando_derecha)
+                                if vidas <= 0: 
+                                    juego_terminado = True
+                                else:
+                                    reiniciar_nivel()
+                                break
+
+                    for barril in pygame.sprite.spritecollide(oil_drum, barrels, False):
+                        if getattr(barril, 'is_blue', False):
+                            if hasattr(oil_drum, 'encendido'): oil_drum.encendido = True 
+                            nuevo_fuego = Fireball(oil_drum.rect.centerx, oil_drum.rect.top - 10)
+                            fireballs.add(nuevo_fuego)
+                            all_sprites.add(nuevo_fuego)
+                        barril.kill()
+
+                    for fuego in fireballs:
+                        if not fuego.in_arc and fuego.activa and player.rect.colliderect(fuego.rect):
+                            if getattr(player, 'has_hammer', False):
+                                fuego.kill()
+                            elif not modo_dios: 
+                                vidas -= 1
+                                animacion_muerte(player.mirando_derecha)
+                                if vidas <= 0:
+                                    juego_terminado = True
+                                else:
+                                    reiniciar_nivel()
+                                break
+                                    
+                    for puntos in puntos_activos[:]:
+                        puntos['rect'].y -= 1  
+                        puntos['timer'] -= 1  
+                        if puntos['timer'] <= 0: puntos_activos.remove(puntos)
+
+                    area_victoria = pauline.rect.inflate(80, 20)
+                    if player.rect.colliderect(area_victoria):
+                        victoria = True
+                        pygame.mixer.music.stop()       
+                        if canal_caminar.get_busy(): canal_caminar.stop()
+                        if canal_martillo.get_busy(): canal_martillo.stop()
+                        sonido_victoria.play()          
+
+                        player.change_x = player.change_y = 0
+                        player.is_jumping = player.climbing = False 
+                        
+                        ancho_mario = player.rect.width
+                        alto_mario = player.rect.height
+                        imagen_base = pygame.image.load(f"{MARIO_DIR}/mario.png").convert_alpha()
+                        imagen_escalada = pygame.transform.scale(imagen_base, (ancho_mario, alto_mario))
+                        player.image = pygame.transform.flip(imagen_escalada, True, False)
+                        
+                        posicion_x_junto_a_pauline = pauline.rect.right + 50 
+                        player.rect = player.image.get_rect(midbottom=(posicion_x_junto_a_pauline, pauline.rect.bottom))
+
+                        for b in barrels.sprites() + decorative_barrels.sprites(): b.kill()
+                        for f in fireballs.sprites() + drum_flames.sprites(): f.kill()
+                        barrels.empty()
+                        decorative_barrels.empty()
+                        fireballs.empty()
+                        drum_flames.empty()
+
+            else:
+                if not pausado:
+                    pauline.update()
+                    if not corazon_creado:
+                        nuevo_corazon = Corazon((player.rect.centerx + pauline.rect.centerx) // 2, pauline.rect.centery - 10)
+                        grupo_corazon.add(nuevo_corazon)
+                        corazon_creado = True
+                    grupo_corazon.update()
+                    
+                    tiempo_cierre_victoria += 1
+                    if tiempo_cierre_victoria >= 60 * 4: 
+                        if nivel < 3:
+                            nivel += 1
+                            cargar_mapa(nivel)
+                            reiniciar_nivel()
+                            victoria = False
+                            corazon_creado = False
+                            for c in grupo_corazon: c.kill()
+                            tiempo_cierre_victoria = 0
+                        else:
+                            running = False 
+
+        # --- SECCIÓN DE DIBUJADO ---
+        screen.fill(BLACK)
+        screen.blit(background_image, (MARGIN, 0))
+
+        COLOR_HUD = (255, 255, 255)
+        BOX_X = 300                  
+        Y_CORCHETES_1, Y_FILA_1, Y_FILA_1_NUM = 60, 65, 91           
+        Y_CORCHETES_2, Y_FILA_2, Y_FILA_2_NUM = 115, 125, 151          
+
+        c_izq = fuente_corchetes.render("[", True, COLOR_HUD)
+        c_der = fuente_corchetes.render("]", True, COLOR_HUD)
+
+        x_m = BOX_X + 20
+        screen.blit(c_izq, (x_m, Y_CORCHETES_1))
+        screen.blit(fuente_hud.render("M", True, COLOR_HUD), (x_m + 16, Y_FILA_1))
+        screen.blit(fuente_hud.render(str(vidas), True, COLOR_HUD), (x_m + 16, Y_FILA_1_NUM))
+        screen.blit(c_der, (x_m + 36, Y_CORCHETES_1))
+
+        x_l = BOX_X + 75
+        screen.blit(c_izq, (x_l, Y_CORCHETES_1))
+        screen.blit(fuente_hud.render("L", True, COLOR_HUD), (x_l + 16, Y_FILA_1))
+        screen.blit(fuente_hud.render(str(nivel), True, COLOR_HUD), (x_l + 16, Y_FILA_1_NUM))
+        screen.blit(c_der, (x_l + 34, Y_CORCHETES_1))
+
+        x_bonus = BOX_X
+        screen.blit(c_izq, (x_bonus + 10, Y_CORCHETES_2))
+        screen.blit(fuente_bonus.render("BONUS", True, COLOR_HUD), (x_bonus + 25, Y_FILA_2 + 4))
+        screen.blit(fuente_hud.render(str(max(0, bonus)), True, COLOR_HUD), (x_bonus + 30, Y_FILA_2_NUM))
+        screen.blit(c_der, (x_bonus + 115, Y_CORCHETES_2))
+
+        for sprite in all_sprites:
+            if sprite != player: screen.blit(sprite.image, sprite.rect)
+
+        if juego_terminado and vidas <= 0: 
+            frame_final = ULTIMO_FRAME_MUERTE if getattr(player, 'mirando_derecha', True) else pygame.transform.flip(ULTIMO_FRAME_MUERTE, True, False)
+            screen.blit(frame_final, player.rect)
+            
+            pantalla_oscura = pygame.Surface((screen.get_width(), screen.get_height()))
+            pantalla_oscura.set_alpha(170) 
+            pantalla_oscura.fill((0, 0, 0)) 
+            screen.blit(pantalla_oscura, (0, 0))
+            
+            texto_game_over = fuente.render("GAME OVER", True, (255, 0, 0)) 
+            rect_texto = texto_game_over.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
+            screen.blit(texto_game_over, rect_texto)
+
+            pygame.display.flip() 
+            pygame.time.wait(3500) 
+            running = False 
+            continue 
+        else:
+            if getattr(player, 'has_hammer', False):
+                 screen.blit(player.image, (player.rect.x - 14, player.rect.y - 32))
+            else:
+                 screen.blit(player.image, player.rect)
+
+        if victoria and corazon_creado:
+            for corazon in grupo_corazon: screen.blit(corazon.image, corazon.rect)
+
+        for puntos in puntos_activos: 
+            screen.blit(puntos['image'], puntos['rect'])
+
+        if mostrar_paredes:
+            for pared in invisible_walls:
+                pygame.draw.rect(screen, (0, 255, 0), pared.rect, 3)
+
+        if pausado:
+            pantalla_oscura_pausa = pygame.Surface((screen.get_width(), screen.get_height()))
+            pantalla_oscura_pausa.set_alpha(150) 
+            pantalla_oscura_pausa.fill((0, 0, 0)) 
+            screen.blit(pantalla_oscura_pausa, (0, 0))
+            
+            texto_pausa = fuente.render("PAUSA", True, (255, 255, 255)) 
+            rect_pausa = texto_pausa.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
+            screen.blit(texto_pausa, rect_pausa)
+
+        pygame.display.flip()
+        clock.tick(60) 
+
+pygame.quit()
